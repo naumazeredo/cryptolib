@@ -62,6 +62,7 @@ class Ring:
 
 
 # TODO: Create Signature
+# TODO: Create verify signature
 class Signature:
     def __init__(self, image, c, r, ring):
         self.image = image
@@ -71,6 +72,7 @@ class Signature:
 
     def create(private_key, utxo, ring):
         # TODO: create signature
+        # TODO: check if txo is unspent (UTXO)
         return Signature(1, 1, 1, 1)
 
 class TXOPool:
@@ -101,6 +103,8 @@ class Transaction:
     def __eq__(self, other):
         return self.R == other.R
 
+    # TODO: Create genesis transaction
+
     def create(r, sender, receiver_amounts, utxos):
         R = r * curve.G
         inputs = []
@@ -130,5 +134,13 @@ class Transaction:
             P = gen_P(r, receiver)
             outputs += TXO(P, txi_sum - txo_sum)
 
-        return Transaction(R, inputs, outputs)
+        transaction = Transaction(R, inputs, outputs)
+        # TODO: Send transaction to TransactionPool
+        # TODO: Send signatures to SignaturePool
 
+        return transaction
+
+
+# TODO: Test flow
+# TODO: Create API
+# TODO: Create graphical stuff?
