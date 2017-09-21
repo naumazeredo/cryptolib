@@ -39,69 +39,96 @@ class User:
     def __init__(self, private_key):
         self.private_key = private_key
 
+    def gen_public_key(self):
+        return private_key.gen_public_key()
+
 
 class Ring:
     RING_SIZE = 10
 
-    def __init__(self, transactions):
-        self.transactions = transactions
+    def __init__(self, txo):
+        self.txos = txos
 
-    def create(transaction, max_size = self.RING_SIZE):
-        amount = transaction.amount
+    def create(txo, max_size = self.RING_SIZE):
+        amount = txo.amount
 
-        transactions = TransactionPool.get_transactions_by_amount(amount, max_size)
-        if transaction not in transactions:
-            transactions.pop()
-            transactions += transaction
+        txos = TXOPool.get_txo(amount, max_size)
+        if txo not in txos:
+            txos.pop()
+            txos += txo
 
-        shuffle(transactions)
-        return Ring(transactions)
+        shuffle(txos)
+        return Ring(txos)
 
 
 # TODO: Create Signature
+class Signature:
+    def __init__(self, image, c, r, ring):
+        self.image = image
+        self.c = c
+        self.r = r
+        self.ring = ring
 
-class TransactionPool:
+    def create(private_key, utxo, ring):
+        # TODO: create signature
+        return Signature(1, 1, 1, 1)
+
+class TXOPool:
     """ Singleton class that stores all transactions """
     class Pool:
         def __init__(self):
             self.pool = {}
 
-        def get_transactions_by_amount(amount, max_size):
+        def get_txo(amount, max_size):
             sample_size = min(max_size, len(self.pool[amount]))
             return random.sample(self.pool[amount], sample_size)
 
     instance = None
     def __init__(self):
-        if not TransactionPool.instance:
-            TransactionPool.instance = TransactionPool.Pool()
+        if not TXOPool.instance:
+            TXOPool.instance = TXOPool.Pool()
 
     def __getattr__(self, name):
         return getattr(self.instance, name)
 
 
 class Transaction:
-    def __init__(self, R, P, amount, signatures):
+    def __init__(self, R, inputs, outputs):
         self.R = R
-        self.P = P
-        self.amount = amount
-        self.signatures = signatures
+        self.inputs = inputs
+        self.outputs = outputs
 
-    def create(r, amount, sender, receiver_pub, transactions):
+    def __eq__(self, other):
+        return self.R == other.R
+
+    def create(r, sender, receiver_amounts, utxos):
         R = r * curve.G
-        P = gen_P(r, receiver_pub)
-        p = gen_p(R, sender.private_key)
-        signatures = []
+        inputs = []
+        outputs = []
 
-        for transaction in transactions:
-            ring = Ring.create(transaction)
-            signature = Signature.create(p, transaction, ring)
-            signatures += signature
+        txo_sum = 0
+        txi_sum = 0
 
-        transaction = Transaction(R, P, amount, signatures)
-        # TODO: verify stuff and add to TransactionPool
-        # TODO: solve change problem!!!
+        for receiver, amount in receiver_amounts:
+            P = gen_P(r, receiver)
+            outputs += TXO(P, amount)
+            txo_sum += amount
 
-        return transaction
+        for utxo in utxos:
+            ring = Ring.create(utxo)
+            p = gen_p(utxo.transaction.R, sender.private_key)
+            signature = Signature.create(p, utxo, ring)
+            inputs += signature
 
-    # TODO: define == operator
+            txi_sum += utxo.amount
+
+        if txo_sum > txi_sum:
+            raise Error("Transaction input not sufficient")
+
+        if txi_sum > txo_sum:
+            receiver = sender.gen_public_key()
+            P = gen_P(r, receiver)
+            outputs += TXO(P, txi_sum - txo_sum)
+
+        return Transaction(R, inputs, outputs)
 
