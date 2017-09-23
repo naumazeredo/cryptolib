@@ -1,1 +1,2 @@
 fastecdsa>=1.4.2
+ipython[all]
