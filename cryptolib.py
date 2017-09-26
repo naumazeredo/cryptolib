@@ -10,7 +10,7 @@ from fastecdsa.point import Point
 
 
 def hash_to_int(point: 'Point') -> int:
-    return int(sha256(str(point.x) + str(point.y)).hexdigest(), 16)
+    return int(sha256((str(point.x) + str(point.y)).encode('utf-8')).hexdigest(), 16)
 
 def hash_to_point(point: 'Point') -> 'Point':
     return curve.G * hash_to_int(point)
@@ -166,9 +166,6 @@ class TXOPool:
         self.pool[txo.amount].add(txo)
 
 
-txopool = TXOPool()
-
-
 class Transaction:
     """Transaction class.
 
@@ -186,7 +183,16 @@ class Transaction:
     def __eq__(self, other):
         return self.R == other.R
 
-    # TODO: Create genesis transaction
+    @staticmethod
+    def create_genesis(r: int, creator: 'User', amount: int):
+        R = r * curve.G
+        P = gen_P(r, creator.gen_public_key())
+
+        utxo = TXO(P, amount)
+        transaction = Transaction(R, [], [utxo])
+        transaction_pool.add(transaction)
+
+        return transaction
 
     @staticmethod
     def create(r: int,
@@ -222,13 +228,37 @@ class Transaction:
             outputs.append(TXO(P, txi_sum - txo_sum))
 
         transaction = Transaction(R, inputs, outputs)
-        # TODO: Send transaction to TransactionPool
-        # TODO: Send signatures to SignaturePool
+        transaction_pool.add(transaction)
 
         return transaction
 
 
-# TODO: Test flow
+class TransactionPool:
+    """Transaction pool.
+
+    Attributes:
+        pool (List[Transaction])
+    """
+
+    def __init__(self):
+        self.pool = []
+
+    def add(self, transaction: 'Transaction'):
+        # TODO: Verify signatures
+        # TODO: Verify if transaction is possible (utxos by sender: signature?)
+        # TODO: Send signatures to SignaturePool
+
+        for utxo in transaction.outputs:
+            utxo.transaction = transaction
+            txo_pool.add(utxo)
+
+        self.pool.append(transaction)
+
+
+txo_pool = TXOPool()
+transaction_pool = TransactionPool()
+
+# TODO: Use mongodb instead of pools
 # TODO: Create API
 # TODO: Create graphical stuff?
 
