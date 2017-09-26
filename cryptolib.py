@@ -2,24 +2,34 @@
 
 from typing import List, Tuple
 from collections import defaultdict
-from random import shuffle, sample
+from random import shuffle, sample, getrandbits
 from hashlib import sha256
 from fastecdsa import keys
 from fastecdsa.curve import P256 as curve
 from fastecdsa.point import Point
 
 
+def point_to_str(point: 'Point') -> str:
+    return (str(point.x) + str(point.y))
+
 def hash_to_int(point: 'Point') -> int:
-    return int(sha256((str(point.x) + str(point.y)).encode('utf-8')).hexdigest(), 16)
+    return int(sha256(point_to_str(point).encode('utf-8')).hexdigest(), 16)
 
 def hash_to_point(point: 'Point') -> 'Point':
     return curve.G * hash_to_int(point)
 
+def hash_signature(ls: 'List[Point]', rs: 'List[Point]'):
+    s = ""
+    for p in ls: s += point_to_str(p)
+    for p in rs: s += point_to_str(p)
+    s = s.encode('utf-8')
+    return int(sha256(s).hexdigest(), 16)
+
 def gen_P(r: int, public_key: 'PublicKey') -> 'Point':
     return hash_to_int(r * public_key.A) * curve.G + public_key.B
 
-def gen_p(R: int, private_key: 'PrivateKey') -> int:
-    return hash_to_int(private_key.a * R) + private_key.b
+def gen_p(R: 'Point', private_key: 'PrivateKey') -> int:
+    return hash_to_int(R * private_key.a) + private_key.b
 
 
 class PublicKey:
@@ -105,8 +115,6 @@ class Ring:
 
 
 # TODO: Create SignaturePool
-# TODO: Create Signature
-# TODO: Create verify signature
 class Signature:
     """Signature class for Ring-Signature.
 
@@ -117,21 +125,82 @@ class Signature:
 
     Attributes:
         image (Point): TXO unique identifier
-        c, r (int): Ring signature constants
+        c, r (List[int]): Ring signature constants
         ring (Ring): Ring used for anonymity
     """
 
-    def __init__(self, image: 'Point', c: int, r: int, ring: 'Ring'):
+    def __init__(self, image: 'Point', cs: 'List[int]', rs: 'List[int]', ring: 'Ring'):
         self.image = image
-        self.c = c
-        self.r = r
+        self.cs = cs
+        self.rs = rs
         self.ring = ring
 
     @staticmethod
     def create(private_key: 'PrivateKey', utxo: 'TXO', ring: 'Ring') -> 'Signature':
-        # TODO: create signature
-        # TODO: check if txo is unspent (UTXO)
-        return Signature(1, 1, 1, 1)
+        if utxo not in ring.txos:
+            return None
+
+        index = ring.txos.index(utxo)
+        qnt = len(ring.txos)
+
+        P = private_key * curve.G
+        I = private_key * hash_to_point(P)
+
+        qs = [getrandbits(128) for i in range(qnt)]
+        ws = [getrandbits(128) for i in range(qnt)]
+
+        Ls = [(qs[i] * curve.G if i == index else qs[i] * curve.G + ws[i] * ring.txos[i].P) for i in range(qnt)]
+        Rs = [(qs[i] * hash_to_point(ring.txos[i].P) if i == index else qs[i] * hash_to_point(ring.txos[i].P) + ws[i] * I) for i in range(qnt)]
+        c = hash_signature(Ls, Rs)
+
+        print("L R")
+        for l in Ls: print(l)
+        for r in Rs: print(r)
+
+        print(c)
+
+        sum_ws = sum(ws) - ws[ring.txos.index(utxo)]
+
+        cs = [(c - sum_ws if i == index else ws[i]) for i in range(qnt)]
+        rs = [(qs[i] - cs[i] * private_key if i == index else qs[i]) for i in range(qnt)]
+
+        for c in cs: print(c)
+
+        return Signature(I, cs, rs, ring)
+
+    def not_used(self) -> bool:
+        # Verify if image was not used
+        if image_pool.get(self.image) is not None:
+            return False
+        print("OK")
+
+        # Verify if the signature is correct
+        qnt = len(self.ring.txos)
+        Ls = [self.rs[i] * curve.G + self.cs[i] * self.ring.txos[i].P for i in range(qnt)]
+        Rs = [self.rs[i] * hash_to_point(self.ring.txos[i].P) + self.cs[i] * self.image for i in range(qnt)]
+        print("L R")
+        for l in Ls: print(l)
+        for r in Rs: print(r)
+        print(hash_signature(Ls, Rs))
+
+        return sum(self.cs) == hash_signature(Ls, Rs)
+
+
+class SignatureImagePool:
+    """Signature Image pool.
+
+    Attributes:
+        pool (Dict[int, Signature])
+    """
+
+    def __init__(self):
+        self.pool = {}
+
+    def add(self, signature: 'Signature'):
+        self.pool[hash_to_int(signature.image)] = signature
+
+    def get(self, image: 'Point'):
+        return self.pool.get(hash_to_int(image))
 
 
 class TXO:
@@ -152,7 +221,7 @@ class TXOPool:
     Holds all TXOs, split by *amount*.
 
     Attributes:
-        pool (Dict[List[TXO]])
+        pool (Dict[int, List[TXO]])
     """
 
     def __init__(self):
@@ -215,12 +284,16 @@ class Transaction:
             ring = Ring.create(utxo)
             p = gen_p(utxo.transaction.R, sender.private_key)
             signature = Signature.create(p, utxo, ring)
+
+            if not signature:
+                raise Error("Signature not valid.")
+
             inputs.append(signature)
 
             txi_sum += utxo.amount
 
         if txo_sum > txi_sum:
-            raise Error("Transaction input not sufficient")
+            raise Error("Transaction input not sufficient.")
 
         if txi_sum > txo_sum:
             receiver = sender.gen_public_key()
@@ -255,10 +328,11 @@ class TransactionPool:
         self.pool.append(transaction)
 
 
+image_pool = SignatureImagePool()
 txo_pool = TXOPool()
 transaction_pool = TransactionPool()
 
-# TODO: Use mongodb instead of pools
+# TODO: Use mongodb instead of (some) pools (persistent: transactions, txos and signatures. generated: images and txo_by_amount)
 # TODO: Create API
 # TODO: Create graphical stuff?
 
