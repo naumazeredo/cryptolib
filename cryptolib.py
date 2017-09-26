@@ -150,21 +150,11 @@ class Signature:
         ws = [getrandbits(128) for i in range(qnt)]
 
         Ls = [(qs[i] * curve.G if i == index else qs[i] * curve.G + ws[i] * ring.txos[i].P) for i in range(qnt)]
-        Rs = [(qs[i] * hash_to_point(ring.txos[i].P) if i == index else qs[i] * hash_to_point(ring.txos[i].P) + ws[i] * I) for i in range(qnt)]
+        Rs = [(qs[i] * hash_to_point(P) if i == index else qs[i] * hash_to_point(ring.txos[i].P) + ws[i] * I) for i in range(qnt)]
         c = hash_signature(Ls, Rs)
 
-        print("L R")
-        for l in Ls: print(l)
-        for r in Rs: print(r)
-
-        print(c)
-
-        sum_ws = sum(ws) - ws[ring.txos.index(utxo)]
-
-        cs = [(c - sum_ws if i == index else ws[i]) for i in range(qnt)]
-        rs = [(qs[i] - cs[i] * private_key if i == index else qs[i]) for i in range(qnt)]
-
-        for c in cs: print(c)
+        cs = [(c - (sum(ws) - ws[index]) if i == index else ws[i]) for i in range(qnt)]
+        rs = [((qs[i] - cs[i] * private_key) % curve.q if i == index else qs[i]) for i in range(qnt)]
 
         return Signature(I, cs, rs, ring)
 
@@ -172,16 +162,11 @@ class Signature:
         # Verify if image was not used
         if image_pool.get(self.image) is not None:
             return False
-        print("OK")
 
         # Verify if the signature is correct
         qnt = len(self.ring.txos)
         Ls = [self.rs[i] * curve.G + self.cs[i] * self.ring.txos[i].P for i in range(qnt)]
         Rs = [self.rs[i] * hash_to_point(self.ring.txos[i].P) + self.cs[i] * self.image for i in range(qnt)]
-        print("L R")
-        for l in Ls: print(l)
-        for r in Rs: print(r)
-        print(hash_signature(Ls, Rs))
 
         return sum(self.cs) == hash_signature(Ls, Rs)
 
