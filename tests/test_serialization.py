@@ -2,21 +2,28 @@
 
 from cryptolib import *
 
+client.drop_database("test-PFCDB")
+db = client["test-PFCDB"]
+
+image_pool.pool = db["ImagePool"]
+txo_pool = db["TXOPool"]
+transaction_pool = db["TransactionPool"]
+
 G = curve.G
 
 g_dic = {
-    'x' : 48439561293906451759052585252797914202762949526041747995844080717082404635286,
-    'y' : 36134250956749795798585127919587881956611106672985015071877198253568414405109}
+    'x' : '48439561293906451759052585252797914202762949526041747995844080717082404635286',
+    'y' : '36134250956749795798585127919587881956611106672985015071877198253568414405109'}
 
 sk_dic = {
-    'a': 78249293113199110214323280884516338625390727449696738378581013760886194308870,
-    'b': 73536829615446284129359712566833812177286578192089963943467768797891589628045}
+    'a': '78249293113199110214323280884516338625390727449696738378581013760886194308870',
+    'b': '73536829615446284129359712566833812177286578192089963943467768797891589628045'}
 
 pk_dic = {
     'A': (78249293113199110214323280884516338625390727449696738378581013760886194308870 * G).serialize(),
     'B': (73536829615446284129359712566833812177286578192089963943467768797891589628045 * G).serialize()}
 
-sk = PrivateKey(sk_dic['a'], sk_dic['b'])
+sk = PrivateKey(int(sk_dic['a']), int(sk_dic['b']))
 pk = sk.get_public_key()
 
 usr = User(sk)
@@ -43,8 +50,8 @@ ring = Ring(txos)
 signature = Signature.create(p1, txo, ring)
 
 img = p1*hash_to_point(P1)
-cs = signature.cs
-rs = signature.rs
+cs = [str(c) for c in signature.cs]
+rs = [str(r) for r in signature.rs]
 r_dic = ring.serialize()
 
 rg1 = 105302519521812717116318027275652627657554197927473744794739667748946304901374
@@ -88,10 +95,10 @@ def test_deserialize_User():
     assert usr == User.deserialize({'private_key' : sk_dic})
 
 def test_serialize_TXO():
-    assert txo.serialize() == {'P' : P1.serialize(), 'amount' : 10}
+    assert txo.serialize() == {'P' : P1.serialize(), 'amount' : '10'}
 
 def test_deserialize_TXO():
-    assert txo == TXO.deserialize({'P' : P1.serialize(), 'amount' : 10})
+    assert txo == TXO.deserialize({'P' : P1.serialize(), 'amount' : '10'})
 
 def test_serialize_Ring():
     assert ring.serialize() == {'txos' : serialized_txos}

@@ -6,13 +6,16 @@ from hashlib import sha256
 from fastecdsa import keys
 from fastecdsa.curve import P256 as curve
 from fastecdsa.point import Point
+from pymongo import MongoClient
+client = MongoClient()
+db = client["PFCDB"]
 
 # Serialization capacities to Point class
 def __serialize_point(self):
-    return {'x' : self.x, 'y' : self.y}
+    return {'x' : str(self.x), 'y' : str(self.y)}
 
 def __deserialize_point(dic : dict):
-    return Point(dic["x"], dic["y"], curve)
+    return Point(int(dic["x"]), int(dic["y"]), curve)
 
 setattr(Point, 'serialize', __serialize_point)
 setattr(Point, 'deserialize', staticmethod(__deserialize_point))
@@ -87,11 +90,11 @@ class PrivateKey:
         return PublicKey(self.a * curve.G, self.b * curve.G)
 
     def serialize(self) -> dict:
-        return {'a' : self.a, 'b' : self.b}
+        return {'a' : str(self.a), 'b' : str(self.b)}
 
     @staticmethod
     def deserialize(dic : dict) -> 'PrivateKey':
-        return PrivateKey(**dic)
+        return PrivateKey(int(dic['a']), int(dic['b']))
 
     @staticmethod
     def create() -> 'PrivateKey':
@@ -154,11 +157,11 @@ class TXO:
     @staticmethod
     def deserialize(dic : dict) -> 'TXO':
         P = Point.deserialize(dic['P'])
-        amount = dic['amount']
+        amount = int(dic['amount'])
         return TXO(P, amount)
 
     def serialize(self) -> dict:
-        return {'P' : self.P.serialize(), 'amount' : self.amount}
+        return {'P' : self.P.serialize(), 'amount' : str(self.amount)}
 
 
 
@@ -221,9 +224,6 @@ class Signature:
         self.ring = ring
 
     def __eq__(self, other):
-        print(self.serialize())
-        print(other.serialize())
-
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
     @staticmethod
@@ -259,15 +259,15 @@ class Signature:
     @staticmethod
     def deserialize(dic : dict) -> 'Signature':
         image = Point.deserialize(dic["image"])
-        cs = dic["cs"][:]
-        rs = dic["rs"][:]
+        cs = [int(c) for c in dic['cs']]
+        rs = [int(r) for r in dic['rs']]
         ring = Ring.deserialize(dic["ring"])
         return Signature(image, cs, rs, ring)
 
     def serialize(self) -> dict:
         image = self.image.serialize()
-        cs = self.cs[:]
-        rs = self.rs[:]
+        cs = [str(c) for c in self.cs]
+        rs = [str(r) for r in self.rs]
         ring = self.ring.serialize()
         return {'image' : image, 'cs' : cs, 'rs' : rs, 'ring' : ring}
 
@@ -292,13 +292,13 @@ class SignatureImagePool:
     """
 
     def __init__(self):
-        self.pool = set()
+        self.pool = db["ImagePool"]
 
     def add(self, signature: 'Signature'):
-        self.pool.add(hash_to_int(signature.image))
+        self.pool.insert_one(signature.image.serialize())
 
     def contains(self, image: 'Point') -> bool:
-        return (hash_to_int(image) in self.pool)
+        return self.pool.find_one(image.serialize()) is not None
 
 
 class TXOPool:
@@ -310,14 +310,15 @@ class TXOPool:
     """
 
     def __init__(self):
-        self.pool = defaultdict(set)
+        self.pool = db["TXOPool"]
 
     def get_sample_list(self, amount: int, max_size: int) -> 'List[TXO]':
-        sample_size = min(max_size, len(self.pool[amount]))
-        return sample(self.pool[amount], sample_size)
+        ans = self.pool.find({'amount' : amount})
+        txos = sample(list(ans), min(max_size, ans.count()))
+        return [TXO.deserialize(txo) for txo in txos]
 
     def add(self, txo: 'TXO'):
-        self.pool[txo.amount].add(txo)
+        self.pool.insert_one(txo.serialize())
 
 
 class Transaction:
@@ -410,7 +411,7 @@ class TransactionPool:
     """
 
     def __init__(self):
-        self.pool = []
+        self.pool = db["TransactionPool"]
 
     def add(self, transaction: 'Transaction'):
         for signature in transaction.inputs:
@@ -418,15 +419,13 @@ class TransactionPool:
                 raise ValueError("Signature not valid.")
 
         for signature in transaction.inputs:
-            #signature_pool.add(signature)
             image_pool.add(signature)
 
         for utxo in transaction.outputs:
             utxo.transaction = transaction
             txo_pool.add(utxo)
 
-        self.pool.append(transaction)
-
+        self.pool.insert_one(transaction.serialize())
 
 image_pool = SignatureImagePool()
 txo_pool = TXOPool()
@@ -436,4 +435,3 @@ transaction_pool = TransactionPool()
 # TODO: Use mongodb instead of (some) pools (persistent: transactions, txos and signatures. generated: images and txo_by_amount)
 # TODO: Create API
 # TODO: Create graphical stuff?
-

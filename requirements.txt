@@ -1,3 +1,4 @@
 fastecdsa>=1.4.3
 ipython[all]
 pytest
+pymongo
