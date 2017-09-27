@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from typing import List, Tuple
 from collections import defaultdict
 from random import shuffle, sample, getrandbits
 from hashlib import sha256
@@ -8,7 +7,17 @@ from fastecdsa import keys
 from fastecdsa.curve import P256 as curve
 from fastecdsa.point import Point
 
+# Serialization capacities to Point class
+def __serialize_point(self):
+    return {'x' : self.x, 'y' : self.y}
 
+def __deserialize_point(dic : dict):
+    return Point(dic["x"], dic["y"], curve)
+
+setattr(Point, 'serialize', __serialize_point)
+setattr(Point, 'deserialize', staticmethod(__deserialize_point))
+
+# Auxiliary hash functions
 def point_to_str(point: 'Point') -> str:
     return (str(point.x) + str(point.y))
 
@@ -23,7 +32,7 @@ def hash_signature(ls: 'List[Point]', rs: 'List[Point]'):
     for p in ls: s += point_to_str(p)
     for p in rs: s += point_to_str(p)
     s = s.encode('utf-8')
-    return int(sha256(s).hexdigest(), 16)
+    return int(sha256(s).hexdigest(), 16) % curve.q
 
 def gen_P(r: int, public_key: 'PublicKey') -> 'Point':
     return hash_to_int(r * public_key.A) * curve.G + public_key.B
@@ -43,6 +52,22 @@ class PublicKey:
         self.A = A
         self.B = B
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
+    def __hash__(self):
+        return hash_to_int(self.A) * hash_to_int(self.B) % curve.q
+
+    def serialize(self) -> dict:
+        A = self.A.serialize()
+        B = self.B.serialize()
+        return {'A' : A, 'B' : B}
+
+    @staticmethod
+    def deserialize(dic : dict) -> 'PublicKey':
+        A = Point.deserialize(dic['A'])
+        B = Point.deserialize(dic['B'])
+        return PublicKey(A, B)
 
 class PrivateKey:
     """Private key class.
@@ -55,8 +80,18 @@ class PrivateKey:
         self.a = a
         self.b = b
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
     def gen_public_key(self) -> 'PublicKey':
         return PublicKey(self.a * curve.G, self.b * curve.G)
+
+    def serialize(self) -> dict:
+        return {'a' : self.a, 'b' : self.b}
+
+    @staticmethod
+    def deserialize(dic : dict) -> 'PrivateKey':
+        return PrivateKey(**dic)
 
     @staticmethod
     def create() -> 'PrivateKey':
@@ -77,19 +112,59 @@ class User:
     def __init__(self, private_key: 'PrivateKey'):
         self.private_key = private_key
 
-    def gen_public_key(self) -> 'PublicKey':
-        return self.private_key.gen_public_key()
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
     @staticmethod
     def create() -> 'User':
         # TODO: save user into file
         return User(PrivateKey.create())
 
-    # TODO: create load function
+    @staticmethod
+    def deserialize(dic : dict) -> 'User':
+        private_key = PrivateKey.deserialize(dic["private_key"])
+        return User(private_key)
+
+    def serialize(self) -> dict:
+        return {'private_key' : self.private_key.serialize()}
+
+    def gen_public_key(self) -> 'PublicKey':
+        return self.private_key.gen_public_key()
+
+
+class TXO:
+    """Transaction Output class.
+
+    Attributes:
+        P (Point): public transaction output address.
+        amount (int): transaction output amount (the value of the TXO)
+    """
+
+    def __init__(self, P: 'Point', amount: int):
+        self.P = P
+        self.amount = amount
+        self.transaction = None
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.serialize() == other.serialize()
+
+    def __hash__(self):
+        return hash_to_int(self.P)
+
+    @staticmethod
+    def deserialize(dic : dict) -> 'TXO':
+        P = Point.deserialize(dic['P'])
+        amount = dic['amount']
+        return TXO(P, amount)
+
+    def serialize(self) -> dict:
+        return {'P' : self.P.serialize(), 'amount' : self.amount}
+
+
 
 
 class Ring:
-    """List of transaction outputs.
+    """List of transaction outputs with same amount.
 
     Attributes:
         txos (List[TXO]): list of TXO with same *amount*
@@ -99,6 +174,9 @@ class Ring:
     def __init__(self, txos: 'List[TXO]'):
         self.txos = txos
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
     @staticmethod
     def create(txo: 'TXO', max_size: int = None) -> 'Ring':
         if not max_size:
@@ -107,11 +185,19 @@ class Ring:
 
         txos = txo_pool.get_sample_list(amount, max_size)
         if txo not in txos:
-            txos.pop()
+            if len(txos) == max_size:
+                txos.pop()
             txos.append(txo)
 
         shuffle(txos)
         return Ring(txos)
+
+    @staticmethod
+    def deserialize(dic : dict) -> 'Ring':
+        return Ring([TXO.deserialize(txo) for txo in dic['txos']])
+
+    def serialize(self) -> dict:
+        return {'txos' : [txo.serialize() for txo in self.txos]}
 
 
 class Signature:
@@ -134,28 +220,56 @@ class Signature:
         self.rs = rs
         self.ring = ring
 
+    def __eq__(self, other):
+        print(self.serialize())
+        print(other.serialize())
+
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
     @staticmethod
-    def create(private_key: 'PrivateKey', utxo: 'TXO', ring: 'Ring') -> 'Signature':
+    def create(p: int, utxo: 'TXO', ring: 'Ring') -> 'Signature':
         if utxo not in ring.txos:
             return None
 
         index = ring.txos.index(utxo)
         qnt = len(ring.txos)
 
-        P = private_key * curve.G
-        I = private_key * hash_to_point(P)
+        P = p * curve.G
+        I = p * hash_to_point(P)
 
-        qs = [getrandbits(128) for i in range(qnt)]
-        ws = [getrandbits(128) for i in range(qnt)]
+        mod = curve.q
+        bit_len = mod.bit_length()
+
+        qs = [getrandbits(bit_len) % curve.q for i in range(qnt)]
+        ws = [getrandbits(bit_len) % curve.q for i in range(qnt)]
 
         Ls = [(qs[i] * curve.G if i == index else qs[i] * curve.G + ws[i] * ring.txos[i].P) for i in range(qnt)]
         Rs = [(qs[i] * hash_to_point(P) if i == index else qs[i] * hash_to_point(ring.txos[i].P) + ws[i] * I) for i in range(qnt)]
         c = hash_signature(Ls, Rs)
 
-        cs = [(c - (sum(ws) - ws[index]) if i == index else ws[i]) for i in range(qnt)]
-        rs = [(qs[i] - cs[i] * private_key if i == index else qs[i]) for i in range(qnt)]
+
+        ci = (c - sum(ws) + ws[index]) % curve.q
+        cs = [(ci if i == index else ws[i]) for i in range(qnt)]
+
+        qi = (qs[index] - cs[index] * p) % curve.q
+        rs = [(qi if i == index else qs[i]) for i in range(qnt)]
 
         return Signature(I, cs, rs, ring)
+
+    @staticmethod
+    def deserialize(dic : dict) -> 'Signature':
+        image = Point.deserialize(dic["image"])
+        cs = dic["cs"][:]
+        rs = dic["rs"][:]
+        ring = Ring.deserialize(dic["ring"])
+        return Signature(image, cs, rs, ring)
+
+    def serialize(self) -> dict:
+        image = self.image.serialize()
+        cs = self.cs[:]
+        rs = self.rs[:]
+        ring = self.ring.serialize()
+        return {'image' : image, 'cs' : cs, 'rs' : rs, 'ring' : ring}
 
     def validate(self) -> bool:
         # Verify if image was not used
@@ -167,7 +281,7 @@ class Signature:
         Ls = [self.rs[i] * curve.G + self.cs[i] * self.ring.txos[i].P for i in range(qnt)]
         Rs = [self.rs[i] * hash_to_point(self.ring.txos[i].P) + self.cs[i] * self.image for i in range(qnt)]
 
-        return sum(self.cs) == hash_signature(Ls, Rs)
+        return sum(self.cs) % curve.q == hash_signature(Ls, Rs)
 
 
 class SignatureImagePool:
@@ -185,19 +299,6 @@ class SignatureImagePool:
 
     def contains(self, image: 'Point') -> bool:
         return (hash_to_int(image) in self.pool)
-
-
-class TXO:
-    """Transaction Output class.
-
-    Attributes:
-        P (Point): public transaction output address.
-        amount (int): transaction output amount (the value of the TXO)
-    """
-
-    def __init__(self, P: 'Point', amount: int):
-        self.P = P
-        self.amount = amount
 
 
 class TXOPool:
@@ -234,7 +335,7 @@ class Transaction:
         self.outputs = outputs
 
     def __eq__(self, other):
-        return self.R == other.R
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
     @staticmethod
     def create_genesis(r: int, creator: 'User', amount: int):
@@ -250,7 +351,7 @@ class Transaction:
     @staticmethod
     def create(r: int,
                sender: 'User',
-               receiver_amounts: 'List[Tuple[PublicKey, int]]',
+               receiver_amounts: 'Dict[PublicKey, int]',
                utxos: 'List[TXO]') -> 'Transaction':
         R = r * curve.G
         inputs = []
@@ -259,7 +360,7 @@ class Transaction:
         txo_sum = 0
         txi_sum = 0
 
-        for receiver, amount in receiver_amounts:
+        for receiver, amount in receiver_amounts.items():
             P = gen_P(r, receiver)
             outputs.append(TXO(P, amount))
             txo_sum += amount
@@ -286,6 +387,19 @@ class Transaction:
         transaction_pool.add(transaction)
 
         return transaction
+
+    @staticmethod
+    def deserialize(dic : dict) -> 'Transaction':
+        R = Point.deserialize(dic['R'])
+        inputs = [Signature.deserialize(signature) for signature in dic['inputs']]
+        outputs = [TXO.deserialize(txo) for txo in dic['outputs']]
+        return Transaction(R, inputs, outputs)
+
+    def serialize(self) -> dict:
+        R = self.R.serialize()
+        inputs = [signature.serialize() for signature in self.inputs]
+        outputs  = [txo.serialize() for txo in self.outputs]
+        return {'R' : R, 'inputs' : inputs, 'outputs' : outputs}
 
 
 class TransactionPool:
