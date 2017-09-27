@@ -17,23 +17,23 @@ pk_dic = {
     'B': (73536829615446284129359712566833812177286578192089963943467768797891589628045 * G).serialize()}
 
 sk = PrivateKey(sk_dic['a'], sk_dic['b'])
-pk = sk.gen_public_key()
+pk = sk.get_public_key()
 
 usr = User(sk)
-rcv = User.create().gen_public_key()
+rcv = User.create().get_public_key()
 
 r1 = 85814027921026973543539706148396817123224058635847751659597460573099266630554
 r2 = 48959747610750136911948260825163278570854261766721583707069542526088554036864
 r3 = 104852587341113109515259000720869421723774691523880821868257127866318165634805
 
-P1 = gen_P(r1, pk)
-p1 = gen_p(r1*G, sk)
+P1 = get_P(r1, pk)
+p1 = get_p(r1*G, sk)
 
-P2 = gen_P(r2, pk)
-p2 = gen_p(r2*G, sk)
+P2 = get_P(r2, pk)
+p2 = get_p(r2*G, sk)
 
-P3 = gen_P(r3, pk)
-p3 = gen_p(r3*G, sk)
+P3 = get_P(r3, pk)
+p3 = get_p(r3*G, sk)
 
 txos = [TXO(P1, 10), TXO(P2, 10), TXO(P3, 10)]
 serialized_txos = [TXO(P1, 10).serialize(), TXO(P2, 10).serialize(), TXO(P3, 10).serialize()]

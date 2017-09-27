@@ -34,10 +34,10 @@ def hash_signature(ls: 'List[Point]', rs: 'List[Point]'):
     s = s.encode('utf-8')
     return int(sha256(s).hexdigest(), 16) % curve.q
 
-def gen_P(r: int, public_key: 'PublicKey') -> 'Point':
+def get_P(r: int, public_key: 'PublicKey') -> 'Point':
     return hash_to_int(r * public_key.A) * curve.G + public_key.B
 
-def gen_p(R: 'Point', private_key: 'PrivateKey') -> int:
+def get_p(R: 'Point', private_key: 'PrivateKey') -> int:
     return hash_to_int(R * private_key.a) + private_key.b
 
 
@@ -83,7 +83,7 @@ class PrivateKey:
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
-    def gen_public_key(self) -> 'PublicKey':
+    def get_public_key(self) -> 'PublicKey':
         return PublicKey(self.a * curve.G, self.b * curve.G)
 
     def serialize(self) -> dict:
@@ -128,8 +128,8 @@ class User:
     def serialize(self) -> dict:
         return {'private_key' : self.private_key.serialize()}
 
-    def gen_public_key(self) -> 'PublicKey':
-        return self.private_key.gen_public_key()
+    def get_public_key(self) -> 'PublicKey':
+        return self.private_key.get_public_key()
 
 
 class TXO:
@@ -340,7 +340,7 @@ class Transaction:
     @staticmethod
     def create_genesis(r: int, creator: 'User', amount: int):
         R = r * curve.G
-        P = gen_P(r, creator.gen_public_key())
+        P = get_P(r, creator.get_public_key())
 
         utxo = TXO(P, amount)
         transaction = Transaction(R, [], [utxo])
@@ -361,13 +361,13 @@ class Transaction:
         txi_sum = 0
 
         for receiver, amount in receiver_amounts.items():
-            P = gen_P(r, receiver)
+            P = get_P(r, receiver)
             outputs.append(TXO(P, amount))
             txo_sum += amount
 
         for utxo in utxos:
             ring = Ring.create(utxo)
-            p = gen_p(utxo.transaction.R, sender.private_key)
+            p = get_p(utxo.transaction.R, sender.private_key)
             signature = Signature.create(p, utxo, ring)
             if not signature:
                 raise ValueError("Signature not valid.")
@@ -379,8 +379,8 @@ class Transaction:
             raise ValueError("Transaction input not sufficient.")
 
         if txi_sum > txo_sum:
-            receiver = sender.gen_public_key()
-            P = gen_P(r, receiver)
+            receiver = sender.get_public_key()
+            P = get_P(r, receiver)
             outputs.append(TXO(P, txi_sum - txo_sum))
 
         transaction = Transaction(R, inputs, outputs)
