@@ -114,7 +114,6 @@ class Ring:
         return Ring(txos)
 
 
-# TODO: Create SignaturePool
 class Signature:
     """Signature class for Ring-Signature.
 
@@ -125,7 +124,7 @@ class Signature:
 
     Attributes:
         image (Point): TXO unique identifier
-        c, r (List[int]): Ring signature constants
+        cs, rs (List[int]): Ring signature constants
         ring (Ring): Ring used for anonymity
     """
 
@@ -158,9 +157,9 @@ class Signature:
 
         return Signature(I, cs, rs, ring)
 
-    def not_used(self) -> bool:
+    def validate(self) -> bool:
         # Verify if image was not used
-        if image_pool.get(self.image) is not None:
+        if image_pool.contains(self.image):
             return False
 
         # Verify if the signature is correct
@@ -179,13 +178,13 @@ class SignatureImagePool:
     """
 
     def __init__(self):
-        self.pool = {}
+        self.pool = set()
 
     def add(self, signature: 'Signature'):
-        self.pool[hash_to_int(signature.image)] = signature
+        self.pool.add(hash_to_int(signature.image))
 
-    def get(self, image: 'Point'):
-        return self.pool.get(hash_to_int(image))
+    def contains(self, image: 'Point') -> bool:
+        return (hash_to_int(image) in self.pool)
 
 
 class TXO:
@@ -269,16 +268,14 @@ class Transaction:
             ring = Ring.create(utxo)
             p = gen_p(utxo.transaction.R, sender.private_key)
             signature = Signature.create(p, utxo, ring)
-
             if not signature:
-                raise Error("Signature not valid.")
+                raise ValueError("Signature not valid.")
 
             inputs.append(signature)
-
             txi_sum += utxo.amount
 
         if txo_sum > txi_sum:
-            raise Error("Transaction input not sufficient.")
+            raise ValueError("Transaction input not sufficient.")
 
         if txi_sum > txo_sum:
             receiver = sender.gen_public_key()
@@ -302,9 +299,13 @@ class TransactionPool:
         self.pool = []
 
     def add(self, transaction: 'Transaction'):
-        # TODO: Verify signatures
-        # TODO: Verify if transaction is possible (utxos by sender: signature?)
-        # TODO: Send signatures to SignaturePool
+        for signature in transaction.inputs:
+            if not signature.validate():
+                raise ValueError("Signature not valid.")
+
+        for signature in transaction.inputs:
+            #signature_pool.add(signature)
+            image_pool.add(signature)
 
         for utxo in transaction.outputs:
             utxo.transaction = transaction
@@ -317,6 +318,7 @@ image_pool = SignatureImagePool()
 txo_pool = TXOPool()
 transaction_pool = TransactionPool()
 
+# TODO: Create SignaturePool?
 # TODO: Use mongodb instead of (some) pools (persistent: transactions, txos and signatures. generated: images and txo_by_amount)
 # TODO: Create API
 # TODO: Create graphical stuff?
