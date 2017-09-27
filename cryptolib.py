@@ -105,7 +105,7 @@ class Ring:
             max_size = Ring.RING_SIZE
         amount = txo.amount
 
-        txos = txopool.get_sample_list(amount, max_size)
+        txos = txo_pool.get_sample_list(amount, max_size)
         if txo not in txos:
             txos.pop()
             txos.append(txo)
@@ -154,7 +154,7 @@ class Signature:
         c = hash_signature(Ls, Rs)
 
         cs = [(c - (sum(ws) - ws[index]) if i == index else ws[i]) for i in range(qnt)]
-        rs = [((qs[i] - cs[i] * private_key) % curve.q if i == index else qs[i]) for i in range(qnt)]
+        rs = [(qs[i] - cs[i] * private_key if i == index else qs[i]) for i in range(qnt)]
 
         return Signature(I, cs, rs, ring)
 
