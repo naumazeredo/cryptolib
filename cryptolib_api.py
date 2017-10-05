@@ -6,6 +6,10 @@ from cryptolib import *
 user = None
 
 
+def clear_data():
+    client.drop_database("PFCDB")
+    db = client["PFCDB"]
+
 def getrand():
     bit_len = curve.q.bit_length()
     return getrandbits(bit_len) % curve.q
@@ -19,7 +23,6 @@ def login(username: str, password: str):
     if dbuser is not None:
         global user
         user = User.deserialize(dbuser['data'])
-        print("Login successful.")
     else:
         print("Login failed.")
 
@@ -27,12 +30,13 @@ def login(username: str, password: str):
 def create_user(username: str, password: str):
     import hashlib
     hash_password = hashlib.sha1(password.encode('utf-8')).hexdigest()
+    created_user = User.create()
     db["Users"].insert_one({
         'user': username,
         'password': hash_password,
-        'data': User.create().serialize()
+        'data': created_user.serialize()
     })
-    login(username, password)
+    return created_user
 
 
 def require_login(func):
@@ -57,6 +61,13 @@ def create_asset(asset_uid: int, amount: int):
     except ValueError as err:
         print("Error while creating asset:", err)
 
+@require_login
+def check_txo_ownership(txo, images, owner = None):
+    if owner is None:
+        owner = user
+    p = get_p(txo.R, owner.private_key)
+    return (get_point(p) == txo.P and
+            get_image(p) not in images)
 
 @require_login
 def get_unspent_assets():
@@ -64,13 +75,9 @@ def get_unspent_assets():
     images = image_pool.get_list()
 
     def test(txo):
-        p = get_p(txo.R, user.private_key)
-        return (get_point(p) == txo.P and
-                get_image(p) not in images)
+        return check_txo_ownership(txo, images)
 
-    utxos = list(filter(test, txos))
-    return utxos
-
+    return list(filter(test, txos))
 
 @require_login
 def list_assets():
@@ -118,6 +125,7 @@ def make_transaction(asset_uid: int, receiver_amounts: 'Dict[PublicKey, int]'):
             'R': transaction.R.serialize()
         })
         print("Transfer successful.")
+        return transaction
     except ValueError as err:
         print("Error while creating asset:", err)
 
@@ -136,21 +144,21 @@ def generate_asset_receipt(asset: 'TXO'):
     r = int(db_asset['r'])
 
     k = getrand()
-    A = asset.public_key.A
+    A = user.get_public_key().A
 
     c = hash_point_list([r*A, k*A, k*G])
     s = (k + c*r) % curve.q
 
-    return [R, A, s, r*A, k*A, k*G]
+    return [s, r*A, k*A, k*G]
 
 
 @require_login
-def verify_asset_receipt(receipt):
+def verify_asset_receipt(receipt, signer_pk, txo):
     G = curve.G
-    R, A, s, rA, kA, kG = receipt
+    s, rA, kA, kG = receipt
+    R = txo.R
+    A = signer_pk.A
     c = hash_point_list([rA, kA, kG])
-
-    # TODO: check if asset is the same as requested!
 
     return (s*G == kG + c*R and s*A == kA + c*rA)
 

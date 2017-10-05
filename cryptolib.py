@@ -123,6 +123,10 @@ class User:
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
+
+    def __hash__(self):
+        return self.get_public_key().__hash__()
+
     @staticmethod
     def create() -> 'User':
         return User(PrivateKey.create())
@@ -189,7 +193,7 @@ class Ring:
     Attributes:
         txos (List[TXO]): list of TXO with same *amount*
     """
-    RING_SIZE = 10
+    RING_SIZE = 5
 
     def __init__(self, txos: 'List[TXO]'):
         self.txos = txos
@@ -203,7 +207,7 @@ class Ring:
             max_size = Ring.RING_SIZE
         amount = txo.amount
 
-        txos = txo_pool.get_sample_list(amount, max_size)
+        txos = txo_pool.get_sample_list(txo.T, amount, max_size)
         if txo not in txos:
             if len(txos) == max_size:
                 txos.pop()
@@ -332,8 +336,8 @@ class TXOPool:
     def __init__(self):
         self.pool = db["TXOPool"]
 
-    def get_sample_list(self, amount: int, max_size: int) -> 'List[TXO]':
-        ans = self.pool.find({'amount' : amount})
+    def get_sample_list(self, T : int, amount: int, max_size: int) -> 'List[TXO]':
+        ans = self.pool.find({'T' : str(T), 'amount' : str(amount)})
         txos = sample(list(ans), min(max_size, ans.count()))
         return [TXO.deserialize(txo) for txo in txos]
 
@@ -383,7 +387,7 @@ class Transaction:
         if utxos is None or len(utxos) == 0:
             raise ValueError("Input empty.")
 
-        if len(set(filter(lambda txo : txo.T, utxos))) > 1:
+        if len(set(map(lambda txo : txo.T, utxos))) > 1:
             raise ValueError("Inputs have different transaction types.")
 
         R = r * curve.G
