@@ -42,8 +42,8 @@ p2 = get_p(r2*G, sk)
 P3 = get_P(r3, pk)
 p3 = get_p(r3*G, sk)
 
-txos = [TXO(P1, 10, pk), TXO(P2, 10, pk), TXO(P3, 10, pk)]
-serialized_txos = [TXO(P1, 10, pk).serialize(), TXO(P2, 10, pk).serialize(), TXO(P3, 10, pk).serialize()]
+txos = [TXO(P1, 10, pk, 0), TXO(P2, 10, pk, 0), TXO(P3, 10, pk, 0)]
+serialized_txos = [TXO(P1, 10, pk, 0).serialize(), TXO(P2, 10, pk, 0).serialize(), TXO(P3, 10, pk, 0).serialize()]
 txo = txos[0]
 
 ring = Ring(txos)
@@ -57,17 +57,19 @@ r_dic = ring.serialize()
 rg1 = 105302519521812717116318027275652627657554197927473744794739667748946304901374
 rg2 = 62747684084566402829733256825691886459511814419445930382914517906404482991334
 
-gen1 = Transaction.create_genesis(rg1, usr, 10)
-gen2 = Transaction.create_genesis(rg2, usr, 10)
+gen1 = Transaction.create_genesis(rg1, usr, 0, 10)
+gen2 = Transaction.create_genesis(rg2, usr, 0, 10)
 
 
 rt = 62000755505829664278669978347292861349108377683113101656333622619248103434192
 tran = Transaction.create(rt, usr, {rcv : 10}, gen1.outputs + gen2.outputs)
 
 t_dic = {
-        'R' : (rt*G).serialize(),
-        'inputs' : [txo.serialize() for txo in tran.inputs],
-        'outputs' : [txo.serialize() for txo in tran.outputs]}
+    'R' : (rt*G).serialize(),
+    'inputs' : [txo.serialize() for txo in tran.inputs],
+    'outputs' : [txo.serialize() for txo in tran.outputs],
+    'T' : '0',
+}
 
 def test_serialize_Point():
     dic = curve.G.serialize()
@@ -95,10 +97,10 @@ def test_deserialize_User():
     assert usr == User.deserialize({'private_key' : sk_dic})
 
 def test_serialize_TXO():
-    assert txo.serialize() == {'P' : P1.serialize(), 'amount' : '10', 'public_key' : pk_dic}
+    assert txo.serialize() == {'P' : P1.serialize(), 'amount' : '10', 'public_key' : pk_dic, 'T' : '0'}
 
 def test_deserialize_TXO():
-    assert txo == TXO.deserialize({'P' : P1.serialize(), 'amount' : '10', 'public_key' : pk_dic})
+    assert txo == TXO.deserialize({'P' : P1.serialize(), 'amount' : '10', 'public_key' : pk_dic, 'T' : '0'})
 
 def test_serialize_Ring():
     assert ring.serialize() == {'txos' : serialized_txos}

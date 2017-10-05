@@ -1,3 +1,4 @@
+from collections import defaultdict
 from random import getrandbits
 from cryptolib import *
 
@@ -47,7 +48,7 @@ def require_login(func):
 def create_asset(asset_uid: int, amount: int):
     try:
         r = getrand()
-        transaction = Transaction.create_genesis(r, user, amount)
+        transaction = Transaction.create_genesis(r, user, asset_uid, amount)
         db["LocalTransactions"].insert_one({
             'r': str(r),
             'R': transaction.R.serialize()
@@ -73,9 +74,17 @@ def get_unspent_assets():
 
 @require_login
 def list_assets():
-    # TODO: asset as dict (id : amount)
-    assets = get_unspent_assets()
-    print(assets)
+    utxos = get_unspent_assets()
+
+    assets = defaultdict(int)
+    for txo in utxos:
+        assets[txo.T] += txo.amount
+
+    if len(assets) == 0:
+        print("No assets!")
+    else:
+        for T, amount in assets.items():
+            print("Asset " + str(T) + ": " + str(amount))
 
 
 @require_login
@@ -85,9 +94,8 @@ def get_excerpt():
 
 @require_login
 def make_transaction(asset_uid: int, receiver_amounts: 'Dict[PublicKey, int]'):
-    assets = get_unspent_assets()
+    assets = list(filter(lambda txo: txo.T == asset_uid, get_unspent_assets()))
 
-    # TODO: verify if user have enough quantity of chosen ID
     desired_amount = sum(receiver_amounts.values())
 
     if sum(map(lambda txo : txo.amount, assets)) < desired_amount:
@@ -100,6 +108,7 @@ def make_transaction(asset_uid: int, receiver_amounts: 'Dict[PublicKey, int]'):
         if amount >= desired_amount:
             break
         utxos.append(utxo)
+        amount += utxo.amount
 
     try:
         r = getrand()

@@ -147,11 +147,12 @@ class TXO:
         amount (int): transaction output amount (the value of the TXO)
     """
 
-    def __init__(self, P: 'Point', amount: int, public_key: 'PublicKey' = None, R: 'Point' = None):
+    def __init__(self, P: 'Point', amount: int, public_key: 'PublicKey', T: int, R: 'Point' = None):
         self.P = P
         self.amount = amount
-        self.R = R
         self.public_key = public_key
+        self.T = T
+        self.R = R
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.serialize() == other.serialize()
@@ -164,23 +165,22 @@ class TXO:
         P = Point.deserialize(dic['P'])
         amount = int(dic['amount'])
         public_key = PublicKey.deserialize(dic['public_key'])
-
+        T = int(dic['T'])
         R = dic.get('R')
         if R is not None:
             R = Point.deserialize(R)
-        return TXO(P, amount, public_key, R)
+        return TXO(P, amount, public_key, T, R)
 
     def serialize(self) -> dict:
         dic = {
             'P' : self.P.serialize(),
             'amount' : str(self.amount),
-            'public_key' : self.public_key.serialize()
+            'public_key' : self.public_key.serialize(),
+            'T': str(self.T)
         }
         if self.R is not None:
             dic['R'] = self.R.serialize()
         return dic
-
-
 
 
 class Ring:
@@ -354,8 +354,9 @@ class Transaction:
         outputs (List[TXO]): TXOs created on transaction
     """
 
-    def __init__(self, R: 'Point', inputs: 'List[Signature]', outputs: 'List[TXO]'):
+    def __init__(self, R: 'Point', T: int, inputs: 'List[Signature]', outputs: 'List[TXO]'):
         self.R = R
+        self.T = T
         self.inputs = inputs
         self.outputs = outputs
 
@@ -363,12 +364,13 @@ class Transaction:
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
     @staticmethod
-    def create_genesis(r: int, creator: 'User', amount: int):
+    def create_genesis(r: int, creator: 'User', T: int, amount: int):
+        # TODO: verify if type is new
         R = r * curve.G
         P = get_P(r, creator.get_public_key())
 
-        utxo = TXO(P, amount, creator.get_public_key())
-        transaction = Transaction(R, [], [utxo])
+        utxo = TXO(P, amount, creator.get_public_key(), T)
+        transaction = Transaction(R, T, [], [utxo])
         transaction_pool.add(transaction)
 
         return transaction
@@ -378,16 +380,24 @@ class Transaction:
                sender: 'User',
                receiver_amounts: 'Dict[PublicKey, int]',
                utxos: 'List[TXO]') -> 'Transaction':
+        if utxos is None or len(utxos) == 0:
+            raise ValueError("Input empty.")
+
+        if len(set(filter(lambda txo : txo.T, utxos))) > 1:
+            raise ValueError("Inputs have different transaction types.")
+
         R = r * curve.G
         inputs = []
         outputs = []
+
+        T = utxos[0].T
 
         txo_sum = 0
         txi_sum = 0
 
         for receiver, amount in receiver_amounts.items():
             P = get_P(r, receiver)
-            outputs.append(TXO(P, amount, receiver))
+            outputs.append(TXO(P, amount, receiver, T))
             txo_sum += amount
 
         for utxo in utxos:
@@ -406,9 +416,12 @@ class Transaction:
         if txi_sum > txo_sum:
             receiver = sender.get_public_key()
             P = get_P(r, receiver)
-            outputs.append(TXO(P, txi_sum - txo_sum, sender.get_public_key()))
+            outputs.append(TXO(P,
+                               txi_sum - txo_sum,
+                               sender.get_public_key(),
+                               T))
 
-        transaction = Transaction(R, inputs, outputs)
+        transaction = Transaction(R, T, inputs, outputs)
         transaction_pool.add(transaction)
 
         return transaction
@@ -416,15 +429,17 @@ class Transaction:
     @staticmethod
     def deserialize(dic : dict) -> 'Transaction':
         R = Point.deserialize(dic['R'])
+        T = int(dic['T'])
         inputs = [Signature.deserialize(signature) for signature in dic['inputs']]
         outputs = [TXO.deserialize(txo) for txo in dic['outputs']]
-        return Transaction(R, inputs, outputs)
+        return Transaction(R, T, inputs, outputs)
 
     def serialize(self) -> dict:
         R = self.R.serialize()
+        T = str(self.T)
         inputs = [signature.serialize() for signature in self.inputs]
         outputs  = [txo.serialize() for txo in self.outputs]
-        return {'R' : R, 'inputs' : inputs, 'outputs' : outputs}
+        return {'R' : R, 'T' : T, 'inputs' : inputs, 'outputs' : outputs}
 
 
 class TransactionPool:
@@ -437,12 +452,7 @@ class TransactionPool:
     def __init__(self):
         self.pool = db["TransactionPool"]
 
-    def add(self, transaction: 'Transaction', new: bool = False):
-        """
-        if new and self.pool.find_one({'R': transaction.serialize().R}) is not None:
-            raise ValueError
-        """
-
+    def add(self, transaction: 'Transaction'):
         for signature in transaction.inputs:
             if not signature.validate():
                 raise ValueError("Signature not valid.")
