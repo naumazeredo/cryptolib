@@ -30,10 +30,9 @@ def hash_to_int(point: 'Point') -> int:
 def hash_to_point(point: 'Point') -> 'Point':
     return curve.G * hash_to_int(point)
 
-def hash_signature(ls: 'List[Point]', rs: 'List[Point]'):
+def hash_point_list(l: 'List[Point]'):
     s = ""
-    for p in ls: s += point_to_str(p)
-    for p in rs: s += point_to_str(p)
+    for p in l: s += point_to_str(p)
     s = s.encode('utf-8')
     return int(sha256(s).hexdigest(), 16) % curve.q
 
@@ -42,6 +41,12 @@ def get_P(r: int, public_key: 'PublicKey') -> 'Point':
 
 def get_p(R: 'Point', private_key: 'PrivateKey') -> int:
     return hash_to_int(R * private_key.a) + private_key.b
+
+def get_image(p: int):
+    return p * hash_to_point(p * curve.G)
+
+def get_point(x: int):
+    return x * curve.G
 
 
 class PublicKey:
@@ -120,7 +125,6 @@ class User:
 
     @staticmethod
     def create() -> 'User':
-        # TODO: save user into file
         return User(PrivateKey.create())
 
     @staticmethod
@@ -143,10 +147,11 @@ class TXO:
         amount (int): transaction output amount (the value of the TXO)
     """
 
-    def __init__(self, P: 'Point', amount: int):
+    def __init__(self, P: 'Point', amount: int, public_key: 'PublicKey' = None, R: 'Point' = None):
         self.P = P
         self.amount = amount
-        self.transaction = None
+        self.R = R
+        self.public_key = public_key
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.serialize() == other.serialize()
@@ -158,10 +163,22 @@ class TXO:
     def deserialize(dic : dict) -> 'TXO':
         P = Point.deserialize(dic['P'])
         amount = int(dic['amount'])
-        return TXO(P, amount)
+        public_key = PublicKey.deserialize(dic['public_key'])
+
+        R = dic.get('R')
+        if R is not None:
+            R = Point.deserialize(R)
+        return TXO(P, amount, public_key, R)
 
     def serialize(self) -> dict:
-        return {'P' : self.P.serialize(), 'amount' : str(self.amount)}
+        dic = {
+            'P' : self.P.serialize(),
+            'amount' : str(self.amount),
+            'public_key' : self.public_key.serialize()
+        }
+        if self.R is not None:
+            dic['R'] = self.R.serialize()
+        return dic
 
 
 
@@ -237,15 +254,14 @@ class Signature:
         P = p * curve.G
         I = p * hash_to_point(P)
 
-        mod = curve.q
-        bit_len = mod.bit_length()
+        bit_len = curve.q.bit_length()
 
         qs = [getrandbits(bit_len) % curve.q for i in range(qnt)]
         ws = [getrandbits(bit_len) % curve.q for i in range(qnt)]
 
         Ls = [(qs[i] * curve.G if i == index else qs[i] * curve.G + ws[i] * ring.txos[i].P) for i in range(qnt)]
         Rs = [(qs[i] * hash_to_point(P) if i == index else qs[i] * hash_to_point(ring.txos[i].P) + ws[i] * I) for i in range(qnt)]
-        c = hash_signature(Ls, Rs)
+        c = hash_point_list(Ls + Rs)
 
 
         ci = (c - sum(ws) + ws[index]) % curve.q
@@ -281,7 +297,7 @@ class Signature:
         Ls = [self.rs[i] * curve.G + self.cs[i] * self.ring.txos[i].P for i in range(qnt)]
         Rs = [self.rs[i] * hash_to_point(self.ring.txos[i].P) + self.cs[i] * self.image for i in range(qnt)]
 
-        return sum(self.cs) % curve.q == hash_signature(Ls, Rs)
+        return sum(self.cs) % curve.q == hash_point_list(Ls + Rs)
 
 
 class SignatureImagePool:
@@ -300,6 +316,10 @@ class SignatureImagePool:
     def contains(self, image: 'Point') -> bool:
         return self.pool.find_one(image.serialize()) is not None
 
+    def get_list(self):
+        images = list(self.pool.find())
+        return [Point.deserialize(i) for i in images]
+
 
 class TXOPool:
     """Transaction Output pool.
@@ -315,6 +335,10 @@ class TXOPool:
     def get_sample_list(self, amount: int, max_size: int) -> 'List[TXO]':
         ans = self.pool.find({'amount' : amount})
         txos = sample(list(ans), min(max_size, ans.count()))
+        return [TXO.deserialize(txo) for txo in txos]
+
+    def get_list(self):
+        txos = list(self.pool.find())
         return [TXO.deserialize(txo) for txo in txos]
 
     def add(self, txo: 'TXO'):
@@ -343,7 +367,7 @@ class Transaction:
         R = r * curve.G
         P = get_P(r, creator.get_public_key())
 
-        utxo = TXO(P, amount)
+        utxo = TXO(P, amount, creator.get_public_key())
         transaction = Transaction(R, [], [utxo])
         transaction_pool.add(transaction)
 
@@ -363,12 +387,12 @@ class Transaction:
 
         for receiver, amount in receiver_amounts.items():
             P = get_P(r, receiver)
-            outputs.append(TXO(P, amount))
+            outputs.append(TXO(P, amount, receiver))
             txo_sum += amount
 
         for utxo in utxos:
             ring = Ring.create(utxo)
-            p = get_p(utxo.transaction.R, sender.private_key)
+            p = get_p(utxo.R, sender.private_key)
             signature = Signature.create(p, utxo, ring)
             if not signature:
                 raise ValueError("Signature not valid.")
@@ -382,7 +406,7 @@ class Transaction:
         if txi_sum > txo_sum:
             receiver = sender.get_public_key()
             P = get_P(r, receiver)
-            outputs.append(TXO(P, txi_sum - txo_sum))
+            outputs.append(TXO(P, txi_sum - txo_sum, sender.get_public_key()))
 
         transaction = Transaction(R, inputs, outputs)
         transaction_pool.add(transaction)
@@ -413,7 +437,12 @@ class TransactionPool:
     def __init__(self):
         self.pool = db["TransactionPool"]
 
-    def add(self, transaction: 'Transaction'):
+    def add(self, transaction: 'Transaction', new: bool = False):
+        """
+        if new and self.pool.find_one({'R': transaction.serialize().R}) is not None:
+            raise ValueError
+        """
+
         for signature in transaction.inputs:
             if not signature.validate():
                 raise ValueError("Signature not valid.")
@@ -422,16 +451,15 @@ class TransactionPool:
             image_pool.add(signature)
 
         for utxo in transaction.outputs:
-            utxo.transaction = transaction
+            utxo.R = transaction.R
             txo_pool.add(utxo)
 
         self.pool.insert_one(transaction.serialize())
 
+    def get_list(self):
+        ts = list(self.pool.find())
+        return [Transaction.deserialize(t) for t in ts]
+
 image_pool = SignatureImagePool()
 txo_pool = TXOPool()
 transaction_pool = TransactionPool()
-
-# TODO: Create SignaturePool?
-# TODO: Use mongodb instead of (some) pools (persistent: transactions, txos and signatures. generated: images and txo_by_amount)
-# TODO: Create API
-# TODO: Create graphical stuff?

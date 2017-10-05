@@ -42,8 +42,8 @@ p2 = get_p(r2*G, sk)
 P3 = get_P(r3, pk)
 p3 = get_p(r3*G, sk)
 
-txos = [TXO(P1, 10), TXO(P2, 10), TXO(P3, 10)]
-serialized_txos = [TXO(P1, 10).serialize(), TXO(P2, 10).serialize(), TXO(P3, 10).serialize()]
+txos = [TXO(P1, 10, pk), TXO(P2, 10, pk), TXO(P3, 10, pk)]
+serialized_txos = [TXO(P1, 10, pk).serialize(), TXO(P2, 10, pk).serialize(), TXO(P3, 10, pk).serialize()]
 txo = txos[0]
 
 ring = Ring(txos)
@@ -95,10 +95,10 @@ def test_deserialize_User():
     assert usr == User.deserialize({'private_key' : sk_dic})
 
 def test_serialize_TXO():
-    assert txo.serialize() == {'P' : P1.serialize(), 'amount' : '10'}
+    assert txo.serialize() == {'P' : P1.serialize(), 'amount' : '10', 'public_key' : pk_dic}
 
 def test_deserialize_TXO():
-    assert txo == TXO.deserialize({'P' : P1.serialize(), 'amount' : '10'})
+    assert txo == TXO.deserialize({'P' : P1.serialize(), 'amount' : '10', 'public_key' : pk_dic})
 
 def test_serialize_Ring():
     assert ring.serialize() == {'txos' : serialized_txos}
